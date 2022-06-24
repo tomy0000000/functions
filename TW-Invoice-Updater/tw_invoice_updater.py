@@ -1,10 +1,10 @@
-import calendar
 import os
 from datetime import date, datetime, timedelta
 from typing import Union
 
 import requests
 from loguru import logger
+from pushover_complete import PushoverAPI
 from pydantic import BaseModel
 from tw_invoice import AppAPIClient
 
@@ -18,6 +18,9 @@ CARD_ENCRYPT = os.environ["CARD_ENCRYPT"]
 UPLOAD_HOST = os.environ["UPLOAD_HOST"]
 UPLOAD_USERNAME = os.environ["UPLOAD_USERNAME"]
 UPLOAD_PASSWORD = os.environ["UPLOAD_PASSWORD"]
+
+PUSHOVER_API_KEY = os.environ["PUSHOVER_API_KEY"]
+PUSHOVER_USER_KEY = os.environ["PUSHOVER_USER_KEY"]
 
 
 class BearerAuth(requests.auth.AuthBase):
@@ -231,6 +234,7 @@ def upload_invoice_details(
 def main():
     # Create API client, upload session and fetch invoices
     client = AppAPIClient(APP_ID, API_KEY, ts_tolerance=180)
+    pushover_client = PushoverAPI(PUSHOVER_API_KEY)
     session = requests.Session()
     session.auth = BearerAuth(UPLOAD_USERNAME, UPLOAD_PASSWORD)
     today = date.today()
@@ -266,6 +270,11 @@ def main():
         parsed_details = [convert_invoice_detail(detail) for detail in details]
         results = upload_invoice_details(invoice["number"], parsed_details, session)
         logger.debug(results)
+        pushover_client.send_message(
+            PUSHOVER_USER_KEY,
+            message=results,
+            title=f"New Invoice: {invoice['number']}",
+        )
 
 
 def lambda_handler(event, context):
