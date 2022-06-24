@@ -31,3 +31,4 @@ jobs:
         run: |
           cd TW-Invoice-Updater
           aws lambda update-function-code --function-name TW-Invoice-Updater --zip-file fileb://packing.zip
+          aws lambda publish-version --function-name TW-Invoice-Updater --description '${{ github.sha }}'
