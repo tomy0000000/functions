@@ -7,6 +7,7 @@ from loguru import logger
 from pushover_complete import PushoverAPI
 from pydantic import BaseModel
 from tw_invoice import AppAPIClient
+from tw_invoice.schema import Invoice, InvoiceDetail
 
 APP_ID = os.environ["APP_ID"]
 API_KEY = os.environ["API_KEY"]
@@ -39,75 +40,6 @@ class BearerAuth(requests.auth.AuthBase):
     def __call__(self, response):
         response.headers["authorization"] = f"Bearer {self.token}"
         return response
-
-
-#
-# API Models
-#
-
-
-class InvoiceDate(BaseModel):
-    year: int
-    month: int
-    date: int
-    day: int
-    hours: int
-    minutes: int
-    seconds: int
-    time: int
-    timezoneOffset: int
-
-
-class Invoice(BaseModel):
-    rowNum: str
-    invNum: str
-    cardType: str
-    cardNo: str
-    sellerName: str
-    invStatus: str
-    invDonatable: bool
-    amount: str
-    invPeriod: str
-    donateMark: bool  # served in 0 or 1, will be cast implicitly to bool
-    sellerBan: str
-    sellerAddress: Union[str, None] = None
-    invoiceTime: str
-    buyerBan: Union[str, None] = None
-    currency: Union[str, None] = None
-    invDate: InvoiceDate
-
-
-class InvoiceResponse(BaseModel):
-    v: str
-    code: int
-    msg: str
-    onlyWinningInv: str
-    details: list[Invoice]
-
-
-class InvoiceDetail(BaseModel):
-    rowNum: str
-    description: str
-    quantity: str
-    unitPrice: str
-    amount: str
-
-
-class InvoiceDetailResponse(BaseModel):
-    v: str
-    code: int
-    msg: str
-    invNum: str
-    invDate: str
-    sellerName: str
-    amount: str
-    invStatus: str
-    invPeriod: str
-    details: list[InvoiceDetail]
-    sellerBan: str
-    sellerAddress: str
-    invoiceTime: str
-    currency: str
 
 
 #
@@ -151,9 +83,7 @@ def get_invoices(
         card_encrypt=CARD_ENCRYPT,
     )
     logger.debug(raw_response)
-    invoice_response = InvoiceResponse.parse_obj(raw_response)
-    assert invoice_response.code == 200, f"{invoice_response.code}"
-    invoices = invoice_response.details
+    invoices = raw_response.details
     logger.info(f"Fetched {len(invoices)} invoices")
     logger.debug(invoices)
     return invoices
@@ -231,15 +161,27 @@ def upload_invoice_details(
     return response.json()
 
 
-def main():
+@logger.catch
+def lambda_handler(event, context):
     # Create API client, upload session and fetch invoices
     client = AppAPIClient(APP_ID, API_KEY, ts_tolerance=180)
     pushover_client = PushoverAPI(PUSHOVER_API_KEY)
     session = requests.Session()
     session.auth = BearerAuth(UPLOAD_USERNAME, UPLOAD_PASSWORD)
-    today = date.today()
-    start_date = today - timedelta(days=20)
-    invoices = get_invoices(client, start_date=start_date, end_date=today)
+
+    start_date = event.get("start_date")
+    if not start_date:
+        start_date = date.today() - timedelta(days=20)
+    else:
+        start_date = date.fromisoformat(start_date)
+
+    end_date = event.get("end_date")
+    if not end_date:
+        end_date = date.today()
+    else:
+        end_date = date.fromisoformat(end_date)
+
+    invoices = get_invoices(client, start_date=start_date, end_date=end_date)
 
     # Validate and parse invoices
     parsed_invoices = [convert_invoice(invoice) for invoice in invoices]
@@ -253,33 +195,35 @@ def main():
     logger.debug(results)
 
     for invoice in results["created"]:
-        detail_response = InvoiceDetailResponse.parse_obj(
-            client.get_carrier_invoices_detail(
-                card_type=CARD_TYPE,
-                card_number=CARD_NUMBER,
-                invoice_number=invoice["number"],
-                invoice_date=datetime.fromisoformat(invoice["timestamp"]).date(),
-                card_encrypt=CARD_ENCRYPT,
-            )
+        detail_response = client.get_carrier_invoices_detail(
+            card_type=CARD_TYPE,
+            card_number=CARD_NUMBER,
+            invoice_number=invoice["number"],
+            invoice_date=datetime.fromisoformat(invoice["timestamp"]).date(),
+            card_encrypt=CARD_ENCRYPT,
         )
-        assert detail_response.code == 200, f"{detail_response.code}"
         details = detail_response.details
         logger.info(f"Fetched {len(details)} details for {invoice['number']}")
-        logger.debug(details)
 
         parsed_details = [convert_invoice_detail(detail) for detail in details]
+        logger.debug(parsed_details)
         results = upload_invoice_details(invoice["number"], parsed_details, session)
         logger.debug(results)
-        pushover_client.send_message(
-            PUSHOVER_USER_KEY,
-            message=results,
-            title=f"New Invoice: {invoice['number']}",
+
+        title = f"🧾 {invoice['number']}"
+        message = (
+            f"📍 {invoice['seller_name']}\n"
+            f"🕒 {invoice['timestamp']}\n"
+            f"💰 {invoice['currency']}${invoice['amount']}\n\n"
         )
-
-
-def lambda_handler(event, context):
-    main()
+        for detail in parsed_details:
+            message += (
+                f"- {detail.description}: ${detail.unit_price} × {detail.quantity}\n"
+            )
+        pushover_client.send_message(PUSHOVER_USER_KEY, message=message, title=title)
 
 
 if __name__ == "__main__":
-    main()
+    today = date.today()
+    start_date = today.replace(day=today.day - 2).isoformat()
+    lambda_handler(event=dict(start_date=start_date), context={})
