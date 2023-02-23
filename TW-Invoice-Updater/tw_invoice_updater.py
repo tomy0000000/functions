@@ -1,5 +1,7 @@
+import argparse
+import calendar
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Union
 
 import requests
@@ -70,6 +72,14 @@ class InvoiceDetailParsed(BaseModel):
     quantity: str
     unit_price: str
     amount: str
+
+
+def shift_month(date: date, months: int) -> date:
+    month = date.month - 1 + months
+    year = date.year + month // 12
+    month = month % 12 + 1
+    day = min(date.day, calendar.monthrange(year, month)[1])
+    return date.replace(year=year, month=month, day=day)
 
 
 def get_invoices(
@@ -169,23 +179,22 @@ def lambda_handler(event, context):
     session = requests.Session()
     session.auth = BearerAuth(UPLOAD_USERNAME, UPLOAD_PASSWORD)
 
-    start_date = event.get("start_date")
-    if not start_date:
-        start_date = date.today() - timedelta(days=20)
+    # e.g. 0 for current month, -1 for last month
+    # max is (-6) months ago (documented), (-7) months ago (actual)
+    month = event.get("relative-month", 0)
+    today = date.today()
+    if month != 0:
+        start_date = shift_month(today, month).replace(day=1)  # First day of the month
+        last_day = calendar.monthrange(start_date.year, start_date.month)[1]
+        end_date = start_date.replace(day=last_day)
     else:
-        start_date = date.fromisoformat(start_date)
-
-    end_date = event.get("end_date")
-    if not end_date:
-        end_date = date.today()
-    else:
-        end_date = date.fromisoformat(end_date)
+        start_date = today.replace(day=1)  # First day of the month
+        end_date = today
 
     invoices = get_invoices(client, start_date=start_date, end_date=end_date)
 
     # Validate and parse invoices
     parsed_invoices = [convert_invoice(invoice) for invoice in invoices]
-    logger.info(f"Parsed {len(parsed_invoices)} invoices")
     logger.debug(parsed_invoices)
 
     # Upload invoices
@@ -224,6 +233,14 @@ def lambda_handler(event, context):
 
 
 if __name__ == "__main__":
-    today = date.today()
-    start_date = today.replace(day=today.day - 2).isoformat()
-    lambda_handler(event=dict(start_date=start_date), context={})
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument(
+        "--relative-month",
+        type=int,
+        default=0,
+        help="Relative month to fetch. Possible values are -7 (7 months ago) to 0 (this month).",
+    )
+    args = parser.parse_args()
+    lambda_handler(event=dict(relative_month=args.relative_month), context={})
