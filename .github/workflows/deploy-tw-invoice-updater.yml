@@ -1,33 +1,35 @@
-name: Deploy TW Invoice Updater
+name: 🚀 Deploy TW Invoice Updater
 
 on:
   push:
     paths:
+      - ".github/workflows/deploy-tw-invoice-updater.yml"
       - "TW-Invoice-Updater/**"
+      - "!TW-Invoice-Updater/README.md"
 
 jobs:
   deploy:
-    name: Deploy lambda function
+    name: 🚀 Deploy lambda function
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
     steps:
-      - name: Checkout repository
+      - name: 🛒 Checkout
         uses: actions/checkout@v3
 
-      - name: Packing
+      - name: 📦 Packaging
         run: |
           cd TW-Invoice-Updater
           bash ./packing.sh
 
-      - name: Configure AWS Credentials
+      - name: 🔧 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
           role-to-assume: arn:aws:iam::514253011358:role/TW-Invoice-Updater-UpdateFunctionCode-Role
           aws-region: ap-northeast-1
 
-      - name: Deploying
+      - name: 🚀 Deploying
         run: |
           cd TW-Invoice-Updater
           aws lambda update-function-code --function-name TW-Invoice-Updater --zip-file fileb://packing.zip
