@@ -11,6 +11,7 @@ Use `relative-month` to change the fetching month. e.g. On 2/5, `relative-month=
 |            | AWS Lambda event JSON    | Local                                              |
 | ---------- | ------------------------ | -------------------------------------------------- |
 | Default    | `{}`                     | `python tw_invoice_updater.py`                     |
+| Debug Mode | `{"debug": true}`        | `python tw_invoice_updater.py --debug`             |
 | Last Month | `{"relative-month": -1}` | `python tw_invoice_updater.py --relative-month=-1` |
 
 ## Deploy

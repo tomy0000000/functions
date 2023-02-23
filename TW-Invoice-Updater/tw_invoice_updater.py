@@ -1,6 +1,7 @@
 import argparse
 import calendar
 import os
+import sys
 from datetime import date, datetime
 from typing import Union
 
@@ -92,10 +93,8 @@ def get_invoices(
         end_date=end_date,
         card_encrypt=CARD_ENCRYPT,
     )
-    logger.debug(raw_response)
     invoices = raw_response.details
     logger.info(f"Fetched {len(invoices)} invoices")
-    logger.debug(invoices)
     return invoices
 
 
@@ -173,6 +172,11 @@ def upload_invoice_details(
 
 @logger.catch
 def lambda_handler(event, context):
+    # Setup logger
+    logger_level = "DEBUG" if bool(event.get("debug", False)) else "INFO"
+    logger.remove()
+    logger.add(sys.stderr, level=logger_level)
+
     # Create API client, upload session and fetch invoices
     client = AppAPIClient(APP_ID, API_KEY, ts_tolerance=180)
     pushover_client = PushoverAPI(PUSHOVER_API_KEY)
@@ -195,15 +199,22 @@ def lambda_handler(event, context):
 
     # Validate and parse invoices
     parsed_invoices = [convert_invoice(invoice) for invoice in invoices]
-    logger.debug(parsed_invoices)
+    logger.debug(
+        f"Parsed invoices: {*[invoice.number for invoice in parsed_invoices],}"
+    )
 
     # Upload invoices
-    results = upload_invoice(parsed_invoices, session)
-    logger.info(f"Created {len(results['created'])} invoices")
-    logger.info(f"Updated {len(results['updated'])} invoices")
-    logger.debug(results)
+    upload_results = upload_invoice(parsed_invoices, session)
+    logger.info(f"Created {len(upload_results['created'])} invoices")
+    logger.debug(
+        f"Created invoices: {*[invoice['number'] for invoice in upload_results['created']],}"
+    )
+    logger.info(f"Updated {len(upload_results['updated'])} invoices")
+    logger.debug(
+        f"Upadted invoices: {*[invoice['number'] for invoice in upload_results['updated']],}"
+    )
 
-    for invoice in results["created"]:
+    for invoice in upload_results["created"]:
         detail_response = client.get_carrier_invoices_detail(
             card_type=CARD_TYPE,
             card_number=CARD_NUMBER,
@@ -212,12 +223,13 @@ def lambda_handler(event, context):
             card_encrypt=CARD_ENCRYPT,
         )
         details = detail_response.details
-        logger.info(f"Fetched {len(details)} details for {invoice['number']}")
 
         parsed_details = [convert_invoice_detail(detail) for detail in details]
-        logger.debug(parsed_details)
         results = upload_invoice_details(invoice["number"], parsed_details, session)
-        logger.debug(results)
+        logger.info(f"Uploaded {len(details)} details for {invoice['number']}")
+        logger.debug(
+            f"Details: {*[detail['description'] for detail in results['created']],}"
+        )
 
         title = f"🧾 {invoice['number']}"
         message = (
@@ -237,10 +249,17 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging",
+    )
+    parser.add_argument(
         "--relative-month",
         type=int,
         default=0,
         help="Relative month to fetch. Possible values are -7 (7 months ago) to 0 (this month).",
     )
     args = parser.parse_args()
-    lambda_handler(event=dict(relative_month=args.relative_month), context={})
+    lambda_handler(
+        event=dict(relative_month=args.relative_month, debug=args.debug), context={}
+    )
