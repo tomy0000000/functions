@@ -75,6 +75,22 @@ class InvoiceDetailParsed(BaseModel):
     amount: str
 
 
+def calculate_date_range(relative_month: int = 0) -> tuple[date, date]:
+    # e.g. 0 for current month, -1 for last month
+    # max is (-6) months ago (documented), (-7) months ago (actual)
+    today = date.today()
+    if relative_month != 0:
+        start_date = shift_month(today, relative_month).replace(
+            day=1
+        )  # First day of the month
+        last_day = calendar.monthrange(start_date.year, start_date.month)[1]
+        end_date = start_date.replace(day=last_day)
+    else:
+        start_date = today.replace(day=1)  # First day of the month
+        end_date = today
+    return start_date, end_date
+
+
 def shift_month(date: date, months: int) -> date:
     month = date.month - 1 + months
     year = date.year + month // 12
@@ -86,6 +102,7 @@ def shift_month(date: date, months: int) -> date:
 def get_invoices(
     client: AppAPIClient, start_date: date, end_date: date
 ) -> list[Invoice]:
+    logger.debug(f"Fetching invoices from {start_date} to {end_date}")
     raw_response = client.get_carrier_invoices_header(
         card_type=CARD_TYPE,
         card_number=CARD_NUMBER,
@@ -172,6 +189,8 @@ def upload_invoice_details(
 
 @logger.catch
 def lambda_handler(event, context):
+    logger.info(f"Event: {event}")
+
     # Setup logger
     logger_level = "DEBUG" if bool(event.get("debug", False)) else "INFO"
     logger.remove()
@@ -183,19 +202,16 @@ def lambda_handler(event, context):
     session = requests.Session()
     session.auth = BearerAuth(UPLOAD_USERNAME, UPLOAD_PASSWORD)
 
-    # e.g. 0 for current month, -1 for last month
-    # max is (-6) months ago (documented), (-7) months ago (actual)
-    month = event.get("relative-month", 0)
-    today = date.today()
-    if month != 0:
-        start_date = shift_month(today, month).replace(day=1)  # First day of the month
-        last_day = calendar.monthrange(start_date.year, start_date.month)[1]
-        end_date = start_date.replace(day=last_day)
+    all_mode = bool(event.get("all", False))
+    if all_mode:
+        invoices = []
+        for month in range(-7, 1):
+            start_date, end_date = calculate_date_range(month)
+            invoices += get_invoices(client, start_date=start_date, end_date=end_date)
     else:
-        start_date = today.replace(day=1)  # First day of the month
-        end_date = today
-
-    invoices = get_invoices(client, start_date=start_date, end_date=end_date)
+        month = event.get("relative-month", 0)
+        start_date, end_date = calculate_date_range(month)
+        invoices = get_invoices(client, start_date=start_date, end_date=end_date)
 
     # Validate and parse invoices
     parsed_invoices = [convert_invoice(invoice) for invoice in invoices]
@@ -243,15 +259,16 @@ def lambda_handler(event, context):
             )
         pushover_client.send_message(PUSHOVER_USER_KEY, message=message, title=title)
 
+    # Send a summary notification for all mode
+    if all_mode:
+        title = "🧾 Invoice Upload Summary for All Mode"
+        message = f"{len(upload_results['created'])} created\n{len(upload_results['updated'])} updated"
+        pushover_client.send_message(PUSHOVER_USER_KEY, message=message, title=title)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging",
     )
     parser.add_argument(
         "--relative-month",
@@ -259,7 +276,15 @@ if __name__ == "__main__":
         default=0,
         help="Relative month to fetch. Possible values are -7 (7 months ago) to 0 (this month).",
     )
-    args = parser.parse_args()
-    lambda_handler(
-        event=dict(relative_month=args.relative_month, debug=args.debug), context={}
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Fetch all invoices available. Equivalent to executing from relative-month=-7 to relative-month=0 at once. When this option is enabled, relative-month is ignored.",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging",
+    )
+    args = parser.parse_args()
+    lambda_handler(event=vars(args), context={})
