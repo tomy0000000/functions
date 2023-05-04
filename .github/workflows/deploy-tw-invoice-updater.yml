@@ -4,8 +4,8 @@ on:
   push:
     paths:
       - ".github/workflows/deploy-tw-invoice-updater.yml"
-      - "TW-Invoice-Updater/**"
-      - "!TW-Invoice-Updater/README.md"
+      - "TW-Invoice-Updater-aws/**"
+      - "!TW-Invoice-Updater-aws/README.md"
 
 jobs:
   deploy:
@@ -20,7 +20,7 @@ jobs:
 
       - name: 📦 Packaging
         run: |
-          cd TW-Invoice-Updater
+          cd TW-Invoice-Updater-aws
           bash ./packing.sh
 
       - name: 🔧 Configure AWS Credentials
@@ -31,6 +31,6 @@ jobs:
 
       - name: 🚀 Deploying
         run: |
-          cd TW-Invoice-Updater
+          cd TW-Invoice-Updater-aws
           aws lambda update-function-code --function-name TW-Invoice-Updater --zip-file fileb://packing.zip
           aws lambda publish-version --function-name TW-Invoice-Updater --description '${{ github.sha }}'
