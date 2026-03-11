@@ -1,0 +1,33 @@
+name: 🗂️ GitHub Issues to Project
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run:
+    name: 🗂️ Assign issues to project
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🛒 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "github-issues-to-project/.python-version"
+
+      - name: 📦 Install dependencies
+        run: |
+          pip install uv
+          cd github-issues-to-project
+          uv pip install --system -r pyproject.toml
+
+      - name: 🔑 Write .env
+        run: echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}" > github-issues-to-project/.env
+
+      - name: 🗂️ Run
+        run: |
+          cd github-issues-to-project
+          python main.py --config config.toml
