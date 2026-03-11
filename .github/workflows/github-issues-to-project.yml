@@ -9,6 +9,7 @@ jobs:
   run:
     name: 🗂️ Assign issues to project
     runs-on: ubuntu-latest
+    environment: github-issues-to-project
     steps:
       - name: 🛒 Checkout
         uses: actions/checkout@v4
@@ -25,7 +26,7 @@ jobs:
           uv pip install --system -r pyproject.toml
 
       - name: 🔑 Write .env
-        run: echo "GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}" > github-issues-to-project/.env
+        run: echo "GITHUB_TOKEN=${{ secrets.GH_PAT }}" > github-issues-to-project/.env
 
       - name: 🗂️ Run
         run: |
